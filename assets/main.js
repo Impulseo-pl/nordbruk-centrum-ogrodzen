@@ -1,408 +1,225 @@
-// STOLBASZ — drobna interaktywność (nav mobile + reveal)
-(function () {
-  // mobilne menu
-  var toggle = document.querySelector('.nav-toggle');
-  var links = document.querySelector('.nav-links');
-  if (toggle && links) {
-    toggle.addEventListener('click', function () {
-      links.classList.toggle('open');
-    });
-    links.querySelectorAll('a').forEach(function (a) {
-      a.addEventListener('click', function () { links.classList.remove('open'); });
-    });
-  }
-
-  // reveal przy scrollu
-  var els = document.querySelectorAll('.reveal');
-  if (!('IntersectionObserver' in window) || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    els.forEach(function (el) { el.classList.add('in'); });
-    return;
-  }
-  var io = new IntersectionObserver(function (entries) {
-    entries.forEach(function (e) {
-      if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
-    });
-  }, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
-  els.forEach(function (el) { io.observe(el); });
-  // od razu pokaż to, co jest w pierwszym ekranie (hero/intro) — nie czekaj na próg observera.
-  // (hero bywa WYŻSZE niż viewport i nigdy nie osiąga 12% swojej powierzchni → zostawało puste do scrolla)
-  requestAnimationFrame(function () {
-    els.forEach(function (el) {
-      var r = el.getBoundingClientRect();
-      if (r.top < window.innerHeight * 0.9 && r.bottom > 0) { el.classList.add('in'); io.unobserve(el); }
-    });
-  });
-})();
-
-// nav kondensuje się po przewinięciu (cienka linia + niższy pasek) — addytywne, lekkie
-(function () {
-  var nav = document.querySelector('.nav') || document.querySelector('header');
-  if (!nav) return;
-  var ticking = false;
-  function upd() { nav.classList.toggle('is-stuck', window.scrollY > 24); ticking = false; }
-  window.addEventListener('scroll', function () {
-    if (!ticking) { ticking = true; requestAnimationFrame(upd); }
-  }, { passive: true });
-  upd();
-})();
-
-/* === rodzina: fachowcy === */
-/* === rodzina FACHOWCY ===
-   TYLKO suwak PRZED/PO (before/after). NAV NIE chowa się (auto-hide) - telefon-CTA ma być ZAWSZE widoczny (decyzja FAZA 3).
-   is-stuck (przezroczysty->cień) obsługuje base.js. */
-(function () {
-  var sliders = document.querySelectorAll('[data-ba]');
-  if (!sliders.length) return;
-  sliders.forEach(function (s) {
-    var dragging = false;
-    function setPos(clientX) {
-      var r = s.getBoundingClientRect();
-      var p = ((clientX - r.left) / r.width) * 100;
-      p = Math.max(3, Math.min(97, p));
-      s.style.setProperty('--ba-pos', p + '%');
-    }
-    function down(e) { dragging = true; setPos(e.touches ? e.touches[0].clientX : e.clientX); }
-    function move(e) { if (dragging) setPos(e.touches ? e.touches[0].clientX : e.clientX); }
-    function up() { dragging = false; }
-    s.addEventListener('pointerdown', down);
-    window.addEventListener('pointermove', move, { passive: true });
-    window.addEventListener('pointerup', up);
-    s.addEventListener('touchstart', down, { passive: true });
-    s.addEventListener('touchmove', move, { passive: true });
-    s.addEventListener('touchend', up);
-  });
-})();
-
-/* === NAV NOBU kontroler (silnik) === */
-(function () {
-  var nav = document.querySelector('.nav');
-  if (!nav) return;
-  var last = window.scrollY || 0, TOP = 8, TH = 6, ticking = false;
-  function upd() {
-    var y = window.scrollY || 0;
-    if (y <= TOP) { nav.classList.remove('nav-hidden', 'nav-solid'); last = y; ticking = false; return; }
-    var d = y - last;
-    if (Math.abs(d) <= TH) { ticking = false; return; }
-    if (d > 0) nav.classList.add('nav-hidden');
-    else { nav.classList.remove('nav-hidden'); nav.classList.add('nav-solid'); }
-    last = y; ticking = false;
-  }
-  window.addEventListener('scroll', function () { if (!ticking) { ticking = true; window.requestAnimationFrame(upd); } }, { passive: true });
-  upd();
-})();
-
-/* === MOTION LAYER v2 (silnik) === */
-/* ============================================================
-   MOTION LAYER v2 — logika ruchu (2026-07-26). Para do motion.css.
-   ------------------------------------------------------------
-   FILOZOFIA BEZPIECZEŃSTWA: ten plik może paść w całości i strona ma dalej
-   wyglądać jak przed nim. Dlatego:
-     - klasę `mt-on` (która dopiero WŁĄCZA stany początkowe w CSS) dodajemy
-       na samym KOŃCU udanej inicjalizacji, w try/catch,
-     - każdy podział tekstu zapamiętuje oryginalny HTML i cofa go przy błędzie,
-     - watchdog po 2.5 s odsłania wszystko, co widać na ekranie (gdyby
-       IntersectionObserver z jakiegoś powodu nie zadziałał).
-   Nie dotykamy hero-obrazu ani niczego w pierwszej sekcji — hero rusza się
-   wyłącznie tekstem (zakaz ruchu geometrycznego na .hero-cine>img).
-   ============================================================ */
+/* NORDBRUK - interakcje strony */
 (function () {
   'use strict';
 
-  var docEl = document.documentElement;
-  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if (reduce) return;                       // user woli spokój — zero ruchu
-  if (!('IntersectionObserver' in window)) return;
+  /* --- nawigacja: tlo po scrollu + menu mobilne --- */
+  var nav = document.querySelector('.nav');
+  var toggle = document.querySelector('.nav-toggle');
 
-  var STEP = 0.09;                          // odstęp między liniami nagłówka (s)
+  function onScroll() {
+    if (!nav) return;
+    nav.classList.toggle('solid', window.scrollY > 40);
+  }
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
 
-  /* ---------- pomocnicze ---------- */
-  function all(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
-  function firstScreen(el) {                // czy element leży w sekcji-hero (nie ruszamy)
-    return !!el.closest('header, .nav, section:first-of-type, .hero-cine, .pagehead, [class*="hero"]');
+  if (toggle && nav) {
+    toggle.addEventListener('click', function () {
+      nav.classList.toggle('open');
+      document.body.style.overflow = nav.classList.contains('open') ? 'hidden' : '';
+    });
+    Array.prototype.forEach.call(nav.querySelectorAll('.nav-links a'), function (a) {
+      a.addEventListener('click', function () {
+        nav.classList.remove('open');
+        document.body.style.overflow = '';
+      });
+    });
   }
 
-  /* ---------- 1) NAGŁÓWKI: podział na realne linie ----------
-     Mierzymy pozycję każdego słowa po złamaniu tekstu, grupujemy słowa o tym
-     samym offsetTop w jedną linię i owijamy w maskę. Robione PO załadowaniu
-     fontów — inaczej linie policzyłyby się dla fontu zastępczego. */
-  function splitLines(el) {
-    if (!el || el.dataset.mtDone) return false;
-    var raw = el.innerHTML;
-    var txt = (el.textContent || '').replace(/\s+/g, ' ').trim();
-    // złożony markup (span z akcentem, link, ikona) albo bardzo długi tekst → prostszy wariant
-    if (!txt || txt.length > 180 || el.querySelector('img,svg,a,button,picture,span,small,br')) return false;
-    try {
-      var words = txt.split(' ');
-      el.textContent = '';
-      words.forEach(function (w, i) {
-        var s = document.createElement('i');
-        s.className = 'mt-w';
-        s.style.fontStyle = 'inherit';
-        s.style.display = 'inline-block';
-        s.textContent = w;
-        el.appendChild(s);
-        if (i < words.length - 1) el.appendChild(document.createTextNode(' '));
-      });
-      // grupowanie po pozycji pionowej = realne linie po złamaniu
-      var lines = [], last = null;
-      all('.mt-w', el).forEach(function (w) {
-        var top = w.offsetTop;
-        if (last === null || Math.abs(top - last) > 4) { lines.push([]); last = top; }
-        lines[lines.length - 1].push(w.textContent);
-      });
-      if (!lines.length) throw new Error('brak linii');
-      el.textContent = '';
-      lines.forEach(function (words2, i) {
-        var line = document.createElement('span');
-        line.className = 'mt-line';
-        var inner = document.createElement('i');
-        inner.textContent = words2.join(' ');
-        inner.style.setProperty('--mt-d', (i * STEP).toFixed(2) + 's');
-        line.appendChild(inner);
-        el.appendChild(line);
-      });
-      el.classList.add('mt-lines');
-      el.dataset.mtDone = '1';
-      return true;
-    } catch (e) {
-      el.innerHTML = raw;                   // awaria → oryginalny nagłówek wraca
-      return false;
-    }
-  }
-
-  function prepHeadings() {
-    // h1 pierwszego ekranu (hero) — jedyny ruch, jaki hero dostaje
-    var h1 = document.querySelector('section h1, header h1, .hero h1, .hero-cine h1');
-    if (h1 && !splitLines(h1)) { h1.classList.add('mt-fade'); }
-    if (h1) { requestAnimationFrame(function () { h1.classList.add('mt-in'); }); }
-
-    // nagłówki sekcji — wchodzą, gdy sekcja pojawia się w oknie
-    var heads = all('.head h2').filter(function (h) { return !firstScreen(h); });
-    heads.forEach(function (h) { if (!splitLines(h)) h.classList.add('mt-fade'); });
+  /* --- pojawianie sie sekcji --- */
+  var items = document.querySelectorAll('.reveal');
+  if ('IntersectionObserver' in window && items.length) {
     var io = new IntersectionObserver(function (entries) {
       entries.forEach(function (e) {
-        if (e.isIntersecting) { e.target.classList.add('mt-in'); io.unobserve(e.target); }
+        if (e.isIntersecting) {
+          e.target.classList.add('in');
+          io.unobserve(e.target);
+        }
       });
-    }, { threshold: 0.2, rootMargin: '0px 0px -8% 0px' });
-    heads.forEach(function (h) { io.observe(h); });
-    // cokolwiek jest już widoczne — pokaż od razu (nie czekaj na scroll)
-    requestAnimationFrame(function () {
-      heads.forEach(function (h) {
-        var r = h.getBoundingClientRect();
-        if (r.top < window.innerHeight * 0.92 && r.bottom > 0) { h.classList.add('mt-in'); io.unobserve(h); }
-      });
+    }, { threshold: 0.08, rootMargin: '0px 0px -60px 0px' });
+    Array.prototype.forEach.call(items, function (el, i) {
+      el.style.transitionDelay = (i % 4) * 70 + 'ms';
+      io.observe(el);
     });
+  } else {
+    Array.prototype.forEach.call(items, function (el) { el.classList.add('in'); });
   }
 
-  /* ---------- 2) ZDJĘCIA: kurtyna + zoom-out, parallax na kaflach ---------- */
-  function prepPhotos() {
-    var HOSTS = '.tile, .gateway, .split-art, .svc-row-art, .g-fig, .doc-fig, .art-fig, .zespol-card figure, .m-tile';
-    all(HOSTS).forEach(function (host) {
-      if (firstScreen(host)) return;                       // hero/pagehead zostają nietknięte (LCP)
-      var img = host.querySelector(':scope > img, :scope > picture > img');
-      if (!img) return;
-      host.classList.add('mt-ph');
-      // parallax tylko tam, gdzie kadr ma stałą wysokość (kafle bento, bramy) —
-      // w masonry (height:auto) rozjechałby układ
-      if ((host.classList.contains('tile') && host.closest('.gallery')) || host.classList.contains('gateway')) {
-        host.classList.add('mt-para');
-      }
-      // element bez .reveal nie dostanie klasy .in od base.js → własny obserwator
-      if (!host.classList.contains('reveal') && !host.closest('.reveal')) {
-        phIO.observe(host);
-      }
-    });
-  }
-  var phIO = new IntersectionObserver(function (entries) {
-    entries.forEach(function (e) {
-      if (e.isIntersecting) { e.target.classList.add('mt-in'); phIO.unobserve(e.target); }
-    });
-  }, { threshold: 0.08, rootMargin: '0px 0px -6% 0px' });
-
-  /* ---------- 3) STAGGER: kolejne elementy siatki wchodzą po sobie ---------- */
-  function prepStagger() {
-    var groups = {};
-    all('.reveal').forEach(function (el) {
-      var p = el.parentElement;
-      if (!p) return;
-      var key = p;
-      if (!groups.k) groups.k = [];
-      if (groups.k.indexOf(key) === -1) groups.k.push(key);
-    });
-    (groups.k || []).forEach(function (parent) {
-      var kids = Array.prototype.filter.call(parent.children, function (c) { return c.classList.contains('reveal'); });
-      if (kids.length < 2) return;
-      kids.forEach(function (k, i) { k.style.setProperty('--i', Math.min(i, 7)); });
-    });
-  }
-
-  /* ---------- 4) LICZBY: doliczanie od zera przy wejściu w ekran ----------
-     Tylko czyste liczby (z opcjonalnym +, %, przecinkiem) — nigdy nie ruszamy
-     tekstu typu „od 2011" w sposób, który zmieniłby jego treść. */
-  function prepCounters() {
-    // Klasy liczb-statystyk używane przez generator (per rodzina):
-    //   .tb-num  fachowcy · .ds-num  dom · .kt-num  klinika · .num  pasek faktów (base)
-    // ⛔ NIE ruszamy .hf-phone-num (to NUMER TELEFONU — animowanie go byłoby wpadką)
-    // ani .pno (numery kroków procesu: 01, 02, 03 — to numeracja, nie statystyka).
-    var DIRECT = '.tb-num, .ds-num, .kt-num, .num';
-    var SCOPE = '.strip, .trust-band, .trust-grid, .spec-band, .stats, .tb-stats, .dom-stats, .kt-stats';
-    var nodes = [];
-    var cand = all(DIRECT).filter(function (el) {
-      return !el.classList.contains('hf-phone-num') && !el.classList.contains('pno') && !el.children.length;
-    });
-    all(SCOPE).forEach(function (box) {
-      all('b, strong, dt', box).forEach(function (el) { if (cand.indexOf(el) === -1) cand.push(el); });
-    });
-    cand.forEach(function (el) {
-      var t = (el.textContent || '').trim();
-      var m = t.match(/^(\d{1,6})([.,]\d{1,2})?\s*([+%a-zA-Zł]{0,3})$/);
-      if (!m) return;
-      var val = parseFloat(m[1] + (m[2] ? '.' + m[2].slice(1) : ''));
-      if (!isFinite(val) || val <= 0 || val > 100000) return;
-      if (val > 1900 && val < 2100) return;                // rok („od 2011") — nie animujemy
-      el.dataset.mtTo = String(val);
-      el.dataset.mtDec = m[2] ? String(m[2].length - 1) : '0';
-      el.dataset.mtSuf = m[3] || '';
-      el.classList.add('mt-num');
-      nodes.push(el);
-    });
-    if (!nodes.length) return;
-    var io = new IntersectionObserver(function (entries) {
+  /* --- liczniki --- */
+  var nums = document.querySelectorAll('[data-count]');
+  if ('IntersectionObserver' in window && nums.length) {
+    var io2 = new IntersectionObserver(function (entries) {
       entries.forEach(function (e) {
         if (!e.isIntersecting) return;
-        io.unobserve(e.target);
-        runCount(e.target);
+        var el = e.target;
+        io2.unobserve(el);
+        var end = parseInt(el.getAttribute('data-count'), 10) || 0;
+        var suf = el.getAttribute('data-suffix') || '';
+        var t0 = null;
+        function step(ts) {
+          if (!t0) t0 = ts;
+          var p = Math.min((ts - t0) / 1100, 1);
+          el.textContent = Math.round(end * (1 - Math.pow(1 - p, 3))) + suf;
+          if (p < 1) requestAnimationFrame(step);
+        }
+        requestAnimationFrame(step);
       });
     }, { threshold: 0.4 });
-    nodes.forEach(function (n) { io.observe(n); });
+    Array.prototype.forEach.call(nums, function (el) { io2.observe(el); });
   }
-  function runCount(el) {
-    var to = parseFloat(el.dataset.mtTo), dec = parseInt(el.dataset.mtDec, 10) || 0, suf = el.dataset.mtSuf || '';
-    var dur = 1100, t0 = null;
-    function frame(ts) {
-      if (t0 === null) t0 = ts;
-      var p = Math.min(1, (ts - t0) / dur);
-      var eased = 1 - Math.pow(1 - p, 3);
-      var v = (to * eased).toFixed(dec).replace('.', ',');
-      el.textContent = v + suf;
-      if (p < 1) requestAnimationFrame(frame);
-      else el.textContent = to.toFixed(dec).replace('.', ',') + suf;
+
+  /* --- filtry galerii --- */
+  var filterBtns = document.querySelectorAll('.filters button');
+  var cells = document.querySelectorAll('.masonry .cell');
+  var counter = document.querySelector('[data-gal-count]');
+
+  function applyFilter(cat) {
+    var shown = 0;
+    Array.prototype.forEach.call(cells, function (c) {
+      var ok = cat === 'all' || c.getAttribute('data-cat') === cat;
+      c.classList.toggle('hide', !ok);
+      if (ok) shown++;
+    });
+    if (counter) counter.textContent = shown;
+  }
+
+  Array.prototype.forEach.call(filterBtns, function (b) {
+    b.addEventListener('click', function () {
+      Array.prototype.forEach.call(filterBtns, function (x) { x.classList.remove('on'); });
+      b.classList.add('on');
+      applyFilter(b.getAttribute('data-filter'));
+    });
+  });
+
+  /* --- lightbox --- */
+  var lb = document.querySelector('.lb');
+  if (lb) {
+    var lbImg = lb.querySelector('img');
+    var lbCap = lb.querySelector('.lb-cap');
+    var openable = [];
+    var idx = 0;
+
+    function collect() {
+      openable = Array.prototype.filter.call(
+        document.querySelectorAll('[data-full]'),
+        function (el) { return !el.classList.contains('hide'); }
+      );
     }
-    requestAnimationFrame(frame);
-  }
+    function show(i) {
+      if (!openable.length) return;
+      idx = (i + openable.length) % openable.length;
+      var el = openable[idx];
+      lbImg.src = el.getAttribute('data-full');
+      lbImg.alt = el.getAttribute('data-cap') || '';
+      if (lbCap) lbCap.textContent = el.getAttribute('data-cap') || '';
+    }
+    function open(el) {
+      collect();
+      var i = openable.indexOf(el);
+      show(i < 0 ? 0 : i);
+      lb.classList.add('on');
+      document.body.style.overflow = 'hidden';
+    }
+    function close() {
+      lb.classList.remove('on');
+      document.body.style.overflow = '';
+      lbImg.src = '';
+    }
 
-  /* ---------- 4b) ŻYWY NAGŁÓWEK — przenikanie kadrów ----------
-     Kadry podaje silnik w atrybucie data-rotate (nasza biblioteka branżowa, nie klient).
-     ⛔ ZERO skalowania i przesuwania — zmienia się WYŁĄCZNIE przezroczystość, bo to
-     skalowanie bitmapy dawało migotanie na teksturach (3x zgłoszenie Szymona).
-     Idiotoodporność: dodatkowe kadry dociągamy DOPIERO po pełnym załadowaniu strony
-     (zero wpływu na szybkość wejścia), a rotacja startuje dopiero, gdy kadr faktycznie
-     się wczytał. Cokolwiek zawiedzie — zostaje zwykłe, statyczne zdjęcie jak dotąd. */
-  function prepHeroRotation() {
-    var host = document.querySelector('img[data-rotate]');
-    if (!host) return;
-    var srcs = (host.getAttribute('data-rotate') || '').split('|').filter(Boolean);
-    if (!srcs.length) return;
-    var box = host.parentElement;
-    if (!box) return;
-    if (getComputedStyle(box).position === 'static') box.style.position = 'relative';
-
-    var layers = [], loaded = 0;
-    srcs.forEach(function (src) {
-      var im = new Image();
-      im.decoding = 'async';
-      im.alt = '';
-      // Warstwa przejmuje klasy zdjęcia-nagłówka (np. hg-bg w gastro), żeby dziedziczyć jego
-      // wygląd i ewentualny delikatny zoom tła. Bez tego ruch „zacinałby się" przy zmianie kadru.
-      im.className = ('mt-hero-layer ' + (host.className || '')).trim();
-      im.onload = function () {
-        loaded++;
-        box.insertBefore(im, host.nextSibling);
-        layers.push(im);
-        if (layers.length === 1) start();
-      };
-      im.onerror = function () { /* brak kadru = po prostu go pomijamy */ };
-      im.src = src;
+    document.addEventListener('click', function (ev) {
+      var t = ev.target.closest ? ev.target.closest('[data-full]') : null;
+      if (t) { ev.preventDefault(); open(t); }
+    });
+    lb.querySelector('.lb-x').addEventListener('click', close);
+    lb.querySelector('.lb-p').addEventListener('click', function (e) { e.stopPropagation(); show(idx - 1); });
+    lb.querySelector('.lb-n').addEventListener('click', function (e) { e.stopPropagation(); show(idx + 1); });
+    lb.addEventListener('click', function (e) { if (e.target === lb) close(); });
+    document.addEventListener('keydown', function (e) {
+      if (!lb.classList.contains('on')) return;
+      if (e.key === 'Escape') close();
+      if (e.key === 'ArrowRight') show(idx + 1);
+      if (e.key === 'ArrowLeft') show(idx - 1);
     });
 
-    function start() {
-      var all = [host].concat(layers), i = 0;
-      setInterval(function () {
-        if (document.hidden) return;                 // karta w tle — nie marnujemy baterii
-        all = [host].concat(layers);
-        if (all.length < 2) return;
-        var prev = i; i = (i + 1) % all.length;
-        all[i].classList.add('mt-show');
-        all[prev].classList.remove('mt-show');
-        if (all[prev] === host) host.classList.add('mt-under');
-      }, 6500);
-    }
+    /* przesuwanie palcem */
+    var x0 = null;
+    lb.addEventListener('touchstart', function (e) { x0 = e.touches[0].clientX; }, { passive: true });
+    lb.addEventListener('touchend', function (e) {
+      if (x0 === null) return;
+      var dx = e.changedTouches[0].clientX - x0;
+      if (Math.abs(dx) > 50) show(idx + (dx < 0 ? 1 : -1));
+      x0 = null;
+    }, { passive: true });
   }
 
-  /* ---------- 5) MAGNETYCZNE CTA (tylko mysz, maks. 4 px) ---------- */
-  function prepMagnetic() {
-    if (!window.matchMedia || !window.matchMedia('(pointer: fine)').matches) return;
-    all('.btn-accent, .btn-light').slice(0, 12).forEach(function (b) {
-      b.addEventListener('mousemove', function (ev) {
-        var r = b.getBoundingClientRect();
-        var dx = (ev.clientX - (r.left + r.width / 2)) / r.width;
-        var dy = (ev.clientY - (r.top + r.height / 2)) / r.height;
-        b.style.translate = (dx * 8).toFixed(1) + 'px ' + (dy * 5).toFixed(1) + 'px';
-      });
-      b.addEventListener('mouseleave', function () { b.style.translate = '0 0'; });
+  /* --- hero: przewijane kadry --- */
+  var heroBox = document.querySelector('[data-hero]');
+  if (heroBox) {
+    var slides = heroBox.querySelectorAll('.slide');
+    var dots = document.querySelectorAll('[data-hero-dots] button');
+    var cur = 0;
+    var timer = null;
+    var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    function goTo(i) {
+      cur = (i + slides.length) % slides.length;
+      Array.prototype.forEach.call(slides, function (s, n) { s.classList.toggle('on', n === cur); });
+      Array.prototype.forEach.call(dots, function (d, n) { d.classList.toggle('on', n === cur); });
+    }
+    function play() {
+      if (still || slides.length < 2) return;
+      clearInterval(timer);
+      timer = setInterval(function () { goTo(cur + 1); }, 7000);
+    }
+    Array.prototype.forEach.call(dots, function (d, n) {
+      d.addEventListener('click', function () { goTo(n); play(); });
     });
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden) { clearInterval(timer); } else { play(); }
+    });
+    play();
   }
 
-  /* ---------- 6) PASEK POSTĘPU (tylko gdy przeglądarka umie scroll-driven) ---------- */
-  function prepProgress() {
-    if (!(window.CSS && CSS.supports && CSS.supports('animation-timeline', 'scroll()'))) return;
-    var bar = document.createElement('div');
-    bar.className = 'mt-progress';
-    bar.setAttribute('aria-hidden', 'true');
-    document.body.appendChild(bar);
-  }
+  /* --- kreator zapytania: sklada gotowa wiadomosc na WhatsApp --- */
+  var kre = document.querySelector('[data-kre]');
+  if (kre) {
+    var prev = kre.querySelector('[data-kre-prev]');
+    var waBtn = kre.querySelector('[data-kre-wa]');
+    var miasto = kre.querySelector('[data-kre-miasto]');
+    var termin = kre.querySelector('[data-kre-termin]');
+    var pick = { co: 'ogrodzenie z bramą', ile: 'niewielki zakres' };
 
-  /* ---------- 7) WATCHDOG — nic nie ma prawa zostać niewidoczne ---------- */
-  function watchdog() {
-    setTimeout(function () {
-      all('.mt-ph, .mt-lines, .mt-fade').forEach(function (el) {
-        var r = el.getBoundingClientRect();
-        if (r.top < window.innerHeight && r.bottom > 0) { el.classList.add('mt-in', 'in'); }
-      });
-    }, 2500);
-  }
-
-  /* ---------- START ---------- */
-  function init() {
-    try {
-      prepStagger();
-      prepPhotos();
-      prepCounters();
-      prepMagnetic();
-      prepProgress();
-      if (document.readyState === 'complete') prepHeroRotation();
-      else addEventListener('load', prepHeroRotation);   // kadry dopiero po załadowaniu strony
-      docEl.classList.add('mt-on');    // dopiero teraz CSS ukrywa stany startowe
-      prepHeadings();                  // nagłówki po pomiarze (fonty gotowe)
-      watchdog();
-    } catch (e) {
-      docEl.classList.remove('mt-on'); // cokolwiek padło → wracamy do wyglądu bazowego
+    function build() {
+      var m = (miasto && miasto.value.trim()) || '';
+      var t = termin ? termin.options[termin.selectedIndex].value : '';
+      var txt = 'Dzień dobry, piszę ze strony NORDBRUK. Planuję ' + pick.co +
+        ' (' + pick.ile + ')' + (m ? ', miejscowość: ' + m : '') +
+        '. Termin: ' + t + '. Proszę o kontakt i wstępną wycenę.';
+      if (prev) {
+        prev.innerHTML = '<b>Treść wiadomości:</b><br>' + txt.replace(/</g, '&lt;');
+      }
+      if (waBtn) {
+        waBtn.setAttribute('href', 'https://wa.me/48887788307?text=' + encodeURIComponent(txt));
+      }
     }
+
+    Array.prototype.forEach.call(kre.querySelectorAll('[data-kre-group]'), function (grp) {
+      var key = grp.getAttribute('data-kre-group');
+      Array.prototype.forEach.call(grp.querySelectorAll('button'), function (b) {
+        b.addEventListener('click', function () {
+          Array.prototype.forEach.call(grp.querySelectorAll('button'), function (x) { x.classList.remove('on'); });
+          b.classList.add('on');
+          pick[key] = b.getAttribute('data-val');
+          build();
+        });
+      });
+    });
+    if (miasto) miasto.addEventListener('input', build);
+    if (termin) termin.addEventListener('change', build);
+    build();
   }
 
-  function boot() {
-    if (document.fonts && document.fonts.ready) {
-      var done = false;
-      var go = function () { if (!done) { done = true; init(); } };
-      document.fonts.ready.then(go);
-      setTimeout(go, 1200);            // font nie doszedł → i tak startujemy
-    } else { init(); }
-  }
-
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
-  else boot();
+  /* --- rok w stopce --- */
+  var y = document.querySelectorAll('[data-year]');
+  Array.prototype.forEach.call(y, function (el) { el.textContent = new Date().getFullYear(); });
 })();
-
-
-/* === licznik otwarć demo (buy-signal) + geo === */
-(function(){try{if(String(location.protocol).indexOf('http')!==0)return;try{if(/[?&#]team=1/.test(location.search+location.hash)){localStorage.setItem('nb_team','1');}}catch(e){}try{if(localStorage.getItem('nb_team')==='1')return;}catch(e){}if((document.referrer||'').indexOf('crm-newbeginning')>-1)return;if(sessionStorage.getItem('_dv'))return;sessionStorage.setItem('_dv','1');var seg=(location.pathname.split('/').filter(Boolean)[0])||'';var base=location.origin+(seg?('/'+seg):'');var ua='';try{ua=(navigator.userAgent||'').slice(0,300);}catch(e){}var EP='https://zngfubfinbojfgaxdrbf.supabase.co/rest/v1/demo_views';var KEY='sb_publishable_MWwoyGlSCWnJ4awtOPF0ow_ZVS0Y8qK';function send(g){try{fetch(EP,{method:'POST',keepalive:true,headers:{'Content-Type':'application/json','apikey':KEY,'Authorization':'Bearer '+KEY,'Prefer':'return=minimal'},body:JSON.stringify({demo_url:base,page:location.pathname,referrer:(document.referrer||null),user_agent:(ua||null),ip:(g&&g.ip)||null,country:(g&&g.cc)||null,city:(g&&g.city)||null})}).catch(function(){});}catch(e){}}var done=false;function once(g){if(done)return;done=true;send(g);}try{var t=setTimeout(function(){once(null);},1500);fetch('https://ipwho.is/?fields=ip,success,country_code,city',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){clearTimeout(t);once(d&&d.success!==false?{ip:d.ip,cc:d.country_code,city:d.city}:null);}).catch(function(){clearTimeout(t);once(null);});}catch(e){once(null);}}catch(e){}})();
